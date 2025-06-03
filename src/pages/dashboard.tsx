@@ -24,19 +24,32 @@ import {
   Play,
   ArrowRight
 } from 'lucide-react';
-import { useSession, signOut } from 'next-auth/react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from "@/components/ui/use-toast"
+import { toast } from "@/components/ui/use-toast";
 import { AIToolsModal } from '@/components/AIToolsModal';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
 
 const Dashboard = () => {
-  const { data: session } = useSession();
   const queryClient = useQueryClient();
   const [selectedCourse, setSelectedCourse] = useState('foundation');
   const [selectedTask, setSelectedTask] = useState(null);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [aiToolsModalOpen, setAiToolsModalOpen] = useState(false);
   const [aiTools, setAiTools] = useState([]);
+
+  const { data: session } = useQuery({
+    queryKey: ['session'],
+    queryFn: async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      return session;
+    }
+  });
 
   const { data: progressData } = useQuery({
     queryKey: ['progress'],
@@ -51,9 +64,11 @@ const Dashboard = () => {
   const { data: profileData } = useQuery({
     queryKey: ['user-profile'],
     queryFn: async () => {
-      const response = await fetch('/api/profile');
-      if (!response.ok) throw new Error('Failed to fetch user profile');
-      return response.json();
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error) throw error;
+      return {
+        name: user.email?.split('@')[0] || 'User'
+      };
     },
     enabled: !!session
   });
@@ -107,22 +122,18 @@ const Dashboard = () => {
       
       const result = await response.json();
       
-      // Show completion toast
       toast({
         title: "Task Completed! 🎉",
         description: `+${result.xpGained} XP earned!`,
       });
 
-      // Check if module is completed and unlock tools
       const moduleProgress = progressData?.find(p => p.moduleId === moduleId);
       const completedTasks = moduleProgress ? moduleProgress.completedTasks.length + 1 : 1;
       
       if (completedTasks === 7) {
-        // Module completed, unlock tools
         unlockToolsMutation.mutate(moduleId);
       }
 
-      // Refresh data
       queryClient.invalidateQueries({ queryKey: ['progress'] });
       queryClient.invalidateQueries({ queryKey: ['user-profile'] });
       
@@ -145,6 +156,32 @@ const Dashboard = () => {
   const handleCloseTaskModal = () => {
     setSelectedTask(null);
     setTaskModalOpen(false);
+  };
+
+  const handleSignOut = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      toast({
+        title: "Error",
+        description: "Failed to sign out. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+    queryClient.clear();
+  };
+
+  const handleSignIn = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'github'
+    });
+    if (error) {
+      toast({
+        title: "Error",
+        description: "Failed to sign in. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   const courses = [
@@ -204,14 +241,12 @@ const Dashboard = () => {
     }
   ];
 
-  // Calculate overall progress
   const totalTasks = courses.reduce((acc, course) => acc + course.days.length, 0);
   const completedTasks = courses.reduce((acc, course) => 
     acc + course.days.filter(day => day.completed).length, 0
   );
   const overallProgress = (completedTasks / totalTasks) * 100;
 
-  // Calculate XP (1 XP per completed day)
   const xp = completedTasks;
 
   const selectedCourseData = courses.find(course => course.id === selectedCourse);
@@ -263,9 +298,7 @@ const Dashboard = () => {
             </CardHeader>
             <CardContent className="space-y-4">
               <Button 
-                onClick={() => {
-                  signIn('github');
-                }}
+                onClick={handleSignIn}
                 className="w-full bg-gray-900 hover:bg-gray-800 text-white transition-all duration-200 hover:scale-105"
               >
                 <Github className="w-4 h-4 mr-2" />
@@ -326,7 +359,7 @@ const Dashboard = () => {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => signOut()}
+                onClick={handleSignOut}
                 className="text-white hover:bg-white/10"
               >
                 <LogOut className="w-4 h-4" />
